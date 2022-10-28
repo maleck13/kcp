@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"math/rand"
+	"strings"
 
 	"github.com/kcp-dev/logicalcluster/v2"
 
@@ -45,7 +46,6 @@ type placementSchedulingReconciler struct {
 
 func (r *placementSchedulingReconciler) reconcile(ctx context.Context, placement *schedulingv1alpha1.Placement) (reconcileStatus, *schedulingv1alpha1.Placement, error) {
 	clusterName := logicalcluster.From(placement)
-
 	// 1. get current scheduled
 	expectedAnnotations := map[string]interface{}{} // nil means to remove the key
 	currentScheduled, foundScheduled := placement.Annotations[workloadv1alpha1.InternalSyncTargetPlacementAnnotationKey]
@@ -59,6 +59,7 @@ func (r *placementSchedulingReconciler) reconcile(ctx context.Context, placement
 	// no valid synctarget, clean the annotation.
 	if foundScheduled && len(syncTargets) == 0 {
 		expectedAnnotations[workloadv1alpha1.InternalSyncTargetPlacementAnnotationKey] = nil
+		expectedAnnotations[workloadv1alpha1.InternalSyncTargetPlacementAttributesAnnotation] = nil
 		updated, err := r.patchPlacementAnnotation(ctx, clusterName, placement, expectedAnnotations)
 		return reconcileStatusContinue, updated, err
 	}
@@ -70,7 +71,13 @@ func (r *placementSchedulingReconciler) reconcile(ctx context.Context, placement
 			if syncTargetKey != currentScheduled {
 				continue
 			}
-			return reconcileStatusContinue, placement, nil
+			attributes, err := r.buildSyncTargetAttributes(syncTarget)
+			if err != nil {
+				return reconcileStatusContinue, placement, err
+			}
+			expectedAnnotations[workloadv1alpha1.InternalSyncTargetPlacementAttributesAnnotation] = attributes
+			updated, err := r.patchPlacementAnnotation(ctx, clusterName, placement, expectedAnnotations)
+			return reconcileStatusContinue, updated, err
 		}
 	}
 
@@ -81,11 +88,46 @@ func (r *placementSchedulingReconciler) reconcile(ctx context.Context, placement
 	if len(syncTargets) > 0 {
 		scheduledSyncTarget := syncTargets[rand.Intn(len(syncTargets))]
 		expectedAnnotations[workloadv1alpha1.InternalSyncTargetPlacementAnnotationKey] = workloadv1alpha1.ToSyncTargetKey(syncTargetClusterName, scheduledSyncTarget.Name)
+		attributes, err := r.buildSyncTargetAttributes(scheduledSyncTarget)
+		if err != nil {
+			return reconcileStatusContinue, placement, err
+		}
+		expectedAnnotations[workloadv1alpha1.InternalSyncTargetPlacementAttributesAnnotation] = attributes
 		updated, err := r.patchPlacementAnnotation(ctx, clusterName, placement, expectedAnnotations)
 		return reconcileStatusContinue, updated, err
 	}
 
 	return reconcileStatusContinue, placement, nil
+}
+
+// Probably should live somewhere else. This is POC code perhaps rather than annotations it should live in the spec of the sync target. no validation done on values currently
+//note would need to trigger reconcile when synctarget annotations changed
+func (r *placementSchedulingReconciler) buildSyncTargetAttributes(target *workloadv1alpha1.SyncTarget) (string, error) {
+	targetCopy := target.DeepCopy()
+	attributes := map[string]map[string]string{}
+	if targetCopy.Annotations == nil {
+		targetCopy.Annotations = map[string]string{}
+	}
+
+	for k, v := range targetCopy.Annotations {
+		if strings.HasPrefix(k, workloadv1alpha1.SyncTargetAttributesAnnotationPrefix) {
+			attribute := strings.Replace(k, workloadv1alpha1.SyncTargetAttributesAnnotationPrefix, "", 1)
+			keys := strings.Split(attribute, ".")
+			if len(keys) == 2 {
+				if existing, ok := attributes[keys[0]]; ok {
+					existing[keys[1]] = v
+					break
+				}
+				attributes[keys[0]] = map[string]string{keys[1]: v}
+			}
+			//poc ignore attributes that don't meet the structure
+		}
+	}
+	attributeJson, err := json.Marshal(attributes)
+	if err != nil {
+		return "", err
+	}
+	return string(attributeJson), nil
 }
 
 func (r *placementSchedulingReconciler) getAllValidSyncTargetsForPlacement(clusterName logicalcluster.Name, placement *schedulingv1alpha1.Placement) (logicalcluster.Name, []*workloadv1alpha1.SyncTarget, error) {

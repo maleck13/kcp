@@ -68,12 +68,15 @@ func (r *placementSchedulingReconciler) reconcile(ctx context.Context, ns *corev
 
 	// 1. pick all synctargets in all bound placements
 	scheduledSyncTargets := sets.NewString()
+	syncTargetAttributes := map[string]string{}
 	for _, placement := range validPlacements {
 		currentScheduled, foundScheduled := placement.Annotations[workloadv1alpha1.InternalSyncTargetPlacementAnnotationKey]
 		if !foundScheduled {
 			continue
 		}
 		scheduledSyncTargets.Insert(currentScheduled)
+		// poc add the attributes to expected annotations
+		syncTargetAttributes[currentScheduled] = placement.Annotations[workloadv1alpha1.InternalSyncTargetPlacementAttributesAnnotation]
 	}
 
 	// 2. find the scheduled synctarget to the ns, including synced, removing
@@ -97,6 +100,7 @@ func (r *placementSchedulingReconciler) reconcile(ctx context.Context, ns *corev
 	for cluster, removingTime := range removing {
 		if removingTime.Add(removingGracePeriod).Before(r.now()) {
 			expectedLabels[workloadv1alpha1.ClusterResourceStateLabelPrefix+cluster] = nil
+			expectedAnnotations[workloadv1alpha1.ClusterAttributesAnnotationPrefix+cluster] = nil
 			expectedAnnotations[workloadv1alpha1.InternalClusterDeletionTimestampAnnotationPrefix+cluster] = nil
 			logger.WithValues("syncTarget", cluster).V(4).Info("removing SyncTarget for Namespace")
 		} else {
@@ -109,6 +113,7 @@ func (r *placementSchedulingReconciler) reconcile(ctx context.Context, ns *corev
 
 	// 5. if a scheduled synctarget is not in synced and removing, add it in to the label
 	for scheduledSyncTarget := range scheduledSyncTargets {
+		expectedAnnotations[workloadv1alpha1.ClusterAttributesAnnotationPrefix+scheduledSyncTarget] = syncTargetAttributes[scheduledSyncTarget]
 		if synced.Has(scheduledSyncTarget) {
 			continue
 		}
@@ -119,7 +124,6 @@ func (r *placementSchedulingReconciler) reconcile(ctx context.Context, ns *corev
 		expectedLabels[workloadv1alpha1.ClusterResourceStateLabelPrefix+scheduledSyncTarget] = string(workloadv1alpha1.ResourceStateSync)
 		logger.WithValues("syncTarget", scheduledSyncTarget).V(4).Info("setting syncTarget as sync for Namespace")
 	}
-
 	if len(expectedLabels) > 0 || len(expectedAnnotations) > 0 {
 		ns, err := r.patchNamespaceLabelAnnotation(ctx, clusterName, ns, expectedLabels, expectedAnnotations)
 		return reconcileStatusContinue, ns, err

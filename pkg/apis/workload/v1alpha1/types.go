@@ -125,4 +125,11 @@ const (
 	// InternalSyncTargetKeyLabel is an internal label set on a SyncTarget resource that contains the full hash of the SyncTargetKey, generated with the ToSyncTargetKey(..)
 	// helper func, this label is used for reverse lookups of a syncTargetKey to SyncTarget.
 	InternalSyncTargetKeyLabel = "internal.workload.kcp.dev/key"
+
+	//SyncTargetAttributesAnnotationPrefix this is a public API used with sync targets
+	SyncTargetAttributesAnnotationPrefix = "experimental.workload.kcp.attribute/"
+	// InternalSyncTargetAttributesAnnotation this is an internal API used to set values on a placement object when a sync target is selected.
+	InternalSyncTargetPlacementAttributesAnnotation = "internal.workload.kcp.attributes"
+	// ClusterAttributesAnnotationPrefix will set the attributes on a placed namespace and have /<synctargetkey>: {geo:{country_code:IE}, cloud:{provider: AWS}} etc
+	ClusterAttributesAnnotationPrefix = "internal.workload.kcp.attributes/"
 )
